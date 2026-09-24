@@ -16,6 +16,14 @@ const envSchema = z.object({
 let cached: z.infer<typeof envSchema> | undefined;
 
 export function env() {
-  if (!cached) cached = envSchema.parse(process.env);
+  if (!cached) {
+    // Treat blank variables as unset so defaults apply. Hosting dashboards make
+    // it easy to create a variable with an empty value, which would otherwise
+    // fail validation (or coerce to 0 for numeric settings).
+    const values = Object.fromEntries(
+      Object.entries(process.env).filter(([, value]) => value !== undefined && value.trim() !== ""),
+    );
+    cached = envSchema.parse(values);
+  }
   return cached;
 }
