@@ -3,8 +3,11 @@ import { cleanText } from "./text";
 // V1 deliberately uses the stable v1 pdf-parse API. It avoids PDF.js worker
 // bundling issues that can occur with Next.js/Turbopack and keeps the demo
 // focused on the RAG pipeline rather than PDF infrastructure.
+// Import the library file directly: pdf-parse's index.js runs a self-test that
+// reads ./test/data/05-versions-space.pdf when it thinks it is the entry module,
+// which throws ENOENT on hosts such as Vercel.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const pdfParse = require("pdf-parse") as (data: Uint8Array, options?: {
+const pdfParse = require("pdf-parse/lib/pdf-parse.js") as (data: Uint8Array, options?: {
   pagerender?: (pageData: { getTextContent: (options?: unknown) => Promise<{ items: Array<{ str?: string }> }> }) => Promise<string>;
 }) => Promise<{ numpages: number; text: string }>;
 
