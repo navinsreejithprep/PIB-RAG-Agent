@@ -121,7 +121,10 @@ export default function RagApp() {
             <h1>DocQuery</h1>
             <p className="subtitle">Upload a PDF. Chunk it. Embed it. Retrieve relevant passages. Ask an LLM for a grounded answer.</p>
           </div>
-          <div className="badge">Local · Next.js · OpenAI</div>
+          <div>
+            <div className="badge">Local · Next.js · OpenAI</div>
+            <a className="badge-link" href="/media">Try Executive Media Intelligence Agent →</a>
+          </div>
         </header>
 
         <section className="learning-strip" aria-label="RAG pipeline">

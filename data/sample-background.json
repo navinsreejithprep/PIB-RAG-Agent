@@ -1,0 +1,52 @@
+{
+  "dataset": "Synthetic background notes for the India renewable-energy sample",
+  "notice": "SYNTHETIC SAMPLE DATA. These explainers were written for demonstration. They summarise general concepts and are not official guidance.",
+  "version": 1,
+  "documents": [
+    {
+      "id": "B01",
+      "title": "Explainer: how renewable energy auctions work",
+      "source": "Sample background note",
+      "date": "2026-01-15",
+      "url": "https://example.com/background/renewable-auctions",
+      "topic": "auctions",
+      "content": "In a reverse auction, a public agency tenders a fixed amount of capacity and developers bid the lowest tariff at which they will sell power, usually over a 25-year power purchase agreement. The lowest bids win until the tendered capacity is filled. Winning tariffs reflect module or turbine prices, financing costs, land and transmission availability, and contract terms such as storage requirements. Tariffs from auctions with different requirements, for example solar-only versus solar-plus-storage, are not directly comparable. An auction result becomes binding only once power purchase agreements are signed."
+    },
+    {
+      "id": "B02",
+      "title": "Explainer: transmission constraints and curtailment",
+      "source": "Sample background note",
+      "date": "2026-01-15",
+      "url": "https://example.com/background/transmission-curtailment",
+      "topic": "grid",
+      "content": "Curtailment happens when a generator is told to reduce output even though it could produce more, typically because transmission lines cannot carry the power or because of grid-security limits. Curtailment is often reported as a monthly average, while daily peaks can be much higher, so average and peak figures are not contradictory. Sustained curtailment reduces developer revenue, can raise financing costs for new projects, and is usually addressed by building transmission, adding storage, or compensating generators."
+    },
+    {
+      "id": "B03",
+      "title": "Explainer: green hydrogen basics",
+      "source": "Sample background note",
+      "date": "2026-01-15",
+      "url": "https://example.com/background/green-hydrogen",
+      "topic": "hydrogen",
+      "content": "Green hydrogen is produced by electrolysers that split water using renewable electricity. Project economics depend on electrolyser cost and availability, the cost of renewable power, and long-term offtake contracts with buyers such as refineries and fertiliser plants. Early projects commonly face delays from equipment supply, offtake negotiations and financing. Commissioning dates announced by companies and reported by media can differ, and the difference is often only resolved when a project reaches commercial operation."
+    },
+    {
+      "id": "B04",
+      "title": "Explainer: battery storage and viability gap funding",
+      "source": "Sample background note",
+      "date": "2026-01-15",
+      "url": "https://example.com/background/storage-vgf",
+      "topic": "storage",
+      "content": "Battery energy storage systems shift solar power from midday to the evening peak and help stabilise the grid. Viability gap funding is a capital subsidy that covers part of a project's upfront cost so that it can offer a tariff buyers will accept. Storage capacity is measured in energy terms (GWh) as well as power terms (GW). Key risks for storage programmes include battery price volatility, grid-connection lead times and commissioning deadlines."
+    },
+    {
+      "id": "B05",
+      "title": "Glossary: units used in Indian energy coverage",
+      "source": "Sample background note",
+      "date": "2026-01-15",
+      "url": "https://example.com/background/units-glossary",
+      "topic": "reference",
+      "content": "MW and GW measure generating capacity; 1 GW equals 1,000 MW. MWh and GWh measure energy. Tariffs are usually quoted in rupees per kilowatt-hour (₹ per kWh). One lakh equals 100,000 and one crore equals 10 million, so ₹1 lakh crore equals ₹1 trillion. Renewable purchase obligations require distribution companies to buy a minimum share of their power from renewable sources."
+    }
+  ]
+}

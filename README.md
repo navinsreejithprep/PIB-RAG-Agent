@@ -1,23 +1,215 @@
-# DocQuery — V1 Basic RAG (Local)
+# Executive Media Intelligence Agent
 
-A deliberately simple, classroom-oriented RAG application. It keeps the architecture visible and avoids Vercel Blob, Chroma Cloud, authentication, and a cloud vector database.
+An agentic RAG prototype that turns a pile of news coverage into an evidence-backed executive brief — with source clustering, cross-source comparison, impact analysis, and citation verification before anything is shown to the user. Built on top of, and alongside, **DocQuery**, a simpler PDF question-answering chatbot (see [V1 — DocQuery](#v1--docquery-pdf-chatbot) below). Both apps run from this one repository.
+
+> **All news content in this prototype is synthetic sample data**, written for demonstration. See [Data sources](#data-sources).
+
+## 1. Product overview
+
+Ask a question like *"What are the major developments affecting India's renewable energy sector?"* and the agent:
+
+1. Classifies what you're asking (summarize / compare / investigate / monitor / etc.).
+2. Searches a news dataset (and, if you've uploaded PDFs through DocQuery, those too).
+3. Clusters articles that cover the same underlying event.
+4. Retrieves background/reference material for context.
+5. Compares sources within each event for agreement, differences, and outright conflicts.
+6. Analyzes implications — what happened, why it matters, what to watch — keeping fact separate from inference.
+7. Writes a structured executive brief with inline citations.
+8. Verifies every citation against the evidence before showing you anything.
+
+## 2. User problem
+
+Reading enough coverage to answer "what happened, why does it matter, and what should I watch next" for a sector takes an analyst hours: finding articles, noticing which ones cover the same event, spotting where outlets disagree, and writing it up so an executive can read it in two minutes. A single-document Q&A chatbot (DocQuery's V1) doesn't help here — it answers "what does this article say," not "what's the overall picture across 20 articles, and what in it is actually agreed-upon fact versus reporting that conflicts."
+
+## 3. Target users
+
+Executives, corporate affairs teams, policy/government-affairs teams, and strategy analysts who need a fast, sourced read on a sector or topic — not a chat interface for one document.
+
+## 4. Why AI is appropriate
+
+- **Semantic clustering** of near-duplicate coverage ("Cabinet approves...", "Government announces...", "New framework unveiled...") isn't reliably doable with keyword matching.
+- **Cross-source comparison** and **implication analysis** require synthesis across many documents, which is exactly what an LLM does well — provided its claims stay grounded in retrieved evidence (see [Responsible AI considerations](#12-responsible-ai-considerations)).
+- **Citation verification** as a distinct, separate step catches a real failure mode (misattributed or fabricated citations) that a single "write the answer" prompt does not reliably self-correct.
+
+## 5. Current workflow (without this tool)
+
+An analyst manually searches for coverage, opens each article, mentally tracks which ones cover the same event, notices discrepancies by memory, and writes up findings — a process that scales linearly with the number of articles and doesn't leave an audit trail of which claim came from which source.
+
+## 6. Proposed workflow (with this tool)
+
+Type one question. Watch a short, honest status log (searching → clustering → comparing → analyzing → verifying) while the agent runs, then read a brief where every material claim is traceable to a specific retrieved source, and every unresolved disagreement between sources is called out rather than silently resolved.
+
+## 7. Agent architecture
+
+```
+USER QUESTION
+   ↓
+ORCHESTRATOR (lib/media/orchestrator.ts)
+   ↓
+ 1. Query Understanding (intent, entities, date range)
+ 2. News Search Tool + Document Search Tool  (parallel)
+ 3. Article Clustering Tool                  (deterministic, embedding similarity)
+ 4. Context Retrieval Tool                   (background/reference docs)
+ 5. Source Comparison Tool                   (per multi-source event cluster)
+ 6. Impact Analysis Tool
+ 7. Executive Brief Generation
+ 8. Citation Verification Tool
+   ↓
+EXECUTIVE BRIEF (streamed to the UI with a live activity log)
+```
+
+This is a **fixed, explainable pipeline**, not a free-form autonomous agent loop. Query-understanding output (intent, date range) steers filtering and status labels; every other step runs in the same order every time, with clear, bounded LLM-call counts. See [docs/architecture.md](docs/architecture.md) for the full diagram, each tool's exact inputs/outputs, and the extension points for making step-selection more dynamic later.
+
+## 8. RAG architecture
+
+Two independent stores share the same building blocks (`lib/openai.ts` embeddings, `lib/similarity.ts` cosine similarity):
+
+- **`lib/store.ts`** — the original DocQuery PDF store (unchanged).
+- **`lib/media/store.ts`** — the news/background dataset, with metadata filtering (topic, source, date range) and semantic search, backed by Postgres + pgvector when `DATABASE_URL` is set, or an in-memory Map for local runs (same two-backend pattern as `lib/store.ts`).
+
+Every retrieved item carries its source ID, title, outlet, date, and URL through the entire pipeline so the final brief's `[S#]`-style citations are traceable end to end.
+
+## 9. Tool definitions
+
+Each tool is documented in its source file with a `USER PROBLEM → AI CAPABILITY → OUTPUT → MEASURABLE VALUE` header, per the product requirement that no tool exists just to look agentic:
+
+| Tool | File | Problem it solves |
+|---|---|---|
+| Query Understanding | `lib/media/tools/intent.ts` | Route the request without over- or under-processing simple asks |
+| News Search Tool | `lib/media/tools/search.ts` (`newsSearch`, `searchByTopic`, `searchByDateRange`, `searchBySource`) | Find relevant coverage without manual reading |
+| Document Search Tool | `lib/media/tools/search.ts` (`searchUploadedDocuments`) | Include the user's own uploaded PDFs (DocQuery) as evidence |
+| Context Retrieval Tool | `lib/media/tools/search.ts` (`retrieveBackground`) | Pull definitions/explainers, not just headlines |
+| Article Clustering Tool | `lib/media/tools/cluster.ts` | Stop near-duplicate coverage from looking like separate developments |
+| Source Comparison Tool | `lib/media/tools/compare.ts` | Surface agreement vs. conflict between outlets, without picking a winner |
+| Impact Analysis Tool | `lib/media/tools/impact.ts` | Answer "why does it matter" and "what to watch," not just "what happened" |
+| Executive Brief Generation | `lib/media/tools/brief.ts` | Produce the one artifact the product exists to produce |
+| Citation Verification Tool | `lib/media/tools/verify.ts` | Catch fabricated or misattributed citations before the user sees them |
+
+## 10. Data sources
+
+**All data is synthetic sample data**, generated for this prototype — see `data/sample-articles.json` (24 articles, fictional outlets and companies, `example.com` URLs) and `data/sample-background.json` (5 reference explainers). The dataset is built around a coherent domain (India's renewable energy sector) and is deliberately constructed with:
+
+- The **same event reported by multiple outlets** with slightly different framing (A01/A02/A03/A04).
+- **Genuinely conflicting figures** for the same fact (₹1.2 lakh crore vs. ₹1.5 lakh crore central support).
+- A **denial pattern** (a delay report vs. the company's on-schedule statement).
+- An **embedded prompt-injection attempt** inside one article's text (A20), to test that retrieved content is treated as data, not instructions.
+- At least one topic with **no coverage in the dataset** (nuclear energy), to test honest "insufficient evidence" behavior.
+
+The architecture supports swapping in a real news API later: `lib/media/tools/search.ts`'s functions are the seam — replace what backs `getMediaStore().search()` and nothing above that layer needs to change.
+
+## 11. Evaluation methodology
+
+`tests/evaluation-dataset.json` has 24 test cases across 11 categories (simple factual retrieval, multi-document synthesis, comparison, conflicting sources, numerical claims, date-sensitive questions, executive summary, implication analysis, citation correctness, insufficient evidence, prompt injection), each with real `expected_sources` IDs from the sample dataset.
+
+`scripts/evaluate-media.mjs` runs every case against a live server and scores what can be scored **without** a human:
+
+- **Retrieval relevance** — recall of `expected_sources` against what was actually retrieved.
+- **Citation existence validity** — do cited IDs correspond to real supplied evidence (deterministic, not LLM-graded).
+- **Citation support** — LLM-graded (a second model call checks whether the cited text actually supports the claim); reported as *approximate*, not ground truth.
+- **Latency** — measured wall-clock time per question.
+- **Insufficient-evidence and prompt-injection pass/fail** — keyword-checked against the actual output.
+
+**Not** automatically scored: factual accuracy and completeness. These are marked `"human_review_required": true` in every result rather than assigned a fabricated number.
+
+Run it with:
+```bash
+npm run dev                 # start the app
+# open http://localhost:3000/media once to trigger sample-data seeding, or:
+curl -X POST http://localhost:3000/api/media/seed
+npm run eval:media          # runs all 24 cases against localhost:3000
+```
+
+See `tests/evaluation-results.json` for the results of the run performed while building this prototype (timestamped; re-running will vary since it calls a live LLM).
+
+## 12. Responsible AI considerations
+
+- **Retrieved text is data, not instructions.** Every LLM-backed tool's system prompt (`prompts/media.ts`) states this explicitly, and the sample dataset includes an article with an embedded injection attempt specifically to test it (evaluation case T17).
+- **Fact vs. inference is structurally separated**, not just worded carefully: `whatHappened`/`keyDevelopments` require citations; `potentialImplications`/`whatToWatch` are explicitly forward-looking judgment in the prompt and the UI.
+- **Conflicts are reported, never resolved by guessing.** The comparison prompt explicitly forbids picking a winner between conflicting sources.
+- **Citation verification is a separate, skeptical pass**, not the same model call that wrote the brief grading its own work uncritically — the verification prompt is instructed to default to "not supported" when unsure.
+- **No claimed accuracy/throughput numbers are fabricated.** See [Baseline methodology](#13-baseline-methodology) and the `factualAccuracy`/`completeness` fields in evaluation output, which are left null with an explicit human-review note.
+
+## 13. Baseline methodology
+
+**Manual baseline** (an analyst reading the same ~24 articles and writing an equivalent brief by hand): **not yet measured** — `[TO BE MEASURED: have someone time a manual research+synthesis pass on the same query and dataset]`.
+
+**AI-assisted (this tool), actually measured**, all 24 cases in `tests/evaluation-dataset.json`, run against the local dev server on the sample dataset (full detail and a note on two measurement anomalies in `tests/evaluation-results.json`):
+
+| Metric | Result |
+|---|---|
+| Cases completed | 24/24 (0 failed) |
+| Average end-to-end latency | 57.3s (excluding two runs inflated by the local machine sleeping mid-request; see the results file's `note`) |
+| p95 latency | 92.7s (same exclusion) |
+| Avg. retrieval recall against expected sources | 96.3% |
+| Avg. citation existence validity (deterministic — no fabricated citation IDs) | 100% |
+| Avg. citation support (LLM-graded, approximate) | 73.1% |
+| Insufficient-evidence cases correctly flagged | 3/3 |
+| Prompt-injection case resisted | 1/1 |
+
+Read the 73.1% citation-support figure carefully: it is a second LLM call grading the first LLM call's citations, instructed to default to "not supported" when unsure (see `prompts/media.ts`) — it is a useful skepticism check, not a formally verified accuracy number, and some of what it flags are legitimate nitpicks (e.g. the brief calling something a "surge" when the source only supports the underlying figures) rather than actual errors. Treat it as a lower bound, not a precise score, until it's been spot-checked by a human against a sample of flagged claims.
+
+Do not quote a "research time reduced by X%" figure until a real manual baseline has been timed on the same task — the numbers above are the AI-assisted side only.
+
+## 14. Limitations
+
+- **Sample data only.** The news dataset is synthetic; connecting a real news API requires replacing the search layer (see [Data sources](#10-data-sources)) and re-running evaluation against real content before trusting the numbers.
+- **Clustering can over-merge topically-adjacent-but-distinct articles.** Embedding-similarity clustering on short news text is not perfect; in testing, articles about different auctions in the same region occasionally clustered together. This is a known, measured limitation, not a hidden one.
+- **Retrieval cannot perfectly separate on-topic from off-topic by similarity score alone.** `text-embedding-3-small` cosine similarity for short, topically-adjacent news does not cleanly separate a genuinely relevant query from a related-but-different one (measured: an off-topic query's best match scored ~0.50, inside the range of genuinely relevant matches for a different query). The brief-writing prompt, not the retrieval threshold, is what is responsible for saying evidence is insufficient — see `lib/media/tools/search.ts` for the calibration numbers.
+- **No persistence for agent runs.** Each query re-runs the full pipeline; there's no caching or run history yet.
+- **In-memory store on local runs.** Same limitation as DocQuery V1 — set `DATABASE_URL` for persistence across restarts/serverless instances.
+- **No authentication.** Anyone with the deployed URL can run queries against your OpenAI key.
+- **Citation "support" checking is itself an LLM call**, not a formally verified proof — treat it as a second opinion that catches obvious misattribution, not a guarantee.
+
+## 15. Setup instructions
+
+```bash
+node -v                      # Node 22+
+npm install
+cp .env.example .env.local   # then add OPENAI_API_KEY
+npm run dev
+```
+
+Open http://localhost:3000 for DocQuery (PDF chatbot), or http://localhost:3000/media for the Executive Media Intelligence Agent. The media dashboard seeds the sample dataset automatically on first load.
+
+For persistent storage (required on Vercel), set `DATABASE_URL` to a Postgres connection string with the `vector` extension available (e.g. a Neon database) — see [Deploying to Vercel](#deploying-to-vercel-persistent-storage) below. Both DocQuery and the media agent use the same `DATABASE_URL`, in separate tables.
+
+## 16. Demo instructions
+
+1. Open `/media`. Wait for "Sample dataset ready" (a few seconds).
+2. Click the first example query chip (India renewable energy developments), or type your own.
+3. Watch the activity log: Understanding → Searching → Clustering → Context → Comparing → Impact → Brief → Verifying.
+4. Read the executive brief. Expand **Key developments** to see the underlying event clusters and their sources. Expand **Source comparison** to see where outlets agreed or conflicted (try the clean-energy-framework funding figure: ₹1.2 lakh crore vs. ₹1.5 lakh crore). Check the confidence score and notes at the top.
+5. Try `"What is India's nuclear energy capacity target?"` to see the honest "evidence insufficient" behavior.
+6. Try `"Summarize the opinion piece about rooftop solar and distribution companies"` to see prompt-injection resistance — article A20 contains a hidden instruction that the agent should not follow.
+
+## 17. Future roadmap
+
+- Replace the sample dataset with a real news API (NewsAPI, GNews, or an RSS pipeline) behind the same `lib/media/tools/search.ts` seam.
+- Cache/persist agent runs so repeat questions don't re-run the full pipeline.
+- A real manual-baseline timing study (see [Baseline methodology](#13-baseline-methodology)).
+- Reranking and hybrid (keyword + semantic) retrieval for better precision than cosine similarity alone.
+- Authentication and per-user rate limiting before any public deployment.
+- Expand clustering beyond O(n²) union-find once article volume grows past a few dozen per query.
+
+---
+
+# V1 — DocQuery (PDF chatbot)
+
+The original, deliberately simple classroom RAG app this prototype was built on top of. Preserved as-is and still fully functional at `/`.
 
 ## Architecture
 
-PDF → text extraction → chunks → OpenAI embeddings → in-memory vector store → cosine similarity → relevant chunks → OpenAI answer → source citations
+PDF → text extraction → chunks → OpenAI embeddings → vector store (in-memory locally, Postgres/pgvector when `DATABASE_URL` is set) → cosine similarity → relevant chunks → OpenAI answer → source citations
 
 ## What V1 deliberately does NOT do
 
 - OCR for scanned/image-only PDFs
-- persistent storage
 - metadata filtering
 - hybrid retrieval
 - reranking
-- evaluation harness
 - agents
-- authentication or multi-user isolation
 
-Those are useful V2–V7 teaching steps. Do not add them to V1 merely to make the demo look more sophisticated.
+Those are useful teaching steps for later; V1 stays intentionally simple. (The Executive Media Intelligence Agent above is where agentic, metadata-filtered, multi-tool RAG lives — DocQuery itself is unchanged.)
 
 ## Requirements
 
@@ -57,13 +249,13 @@ The dev and build scripts explicitly use Webpack. This is intentional: the origi
 3. Extract page text.
 4. Split each page into ~1,000-character chunks with 100-character overlap.
 5. Generate an embedding for every chunk.
-6. Store embeddings in memory.
+6. Store embeddings.
 7. Embed the user's question.
 8. Compute cosine similarity against candidate chunks.
 9. Keep the highest-scoring relevant chunks.
 10. Give those chunks to the LLM as context.
 11. Return a grounded answer with source pages.
-12. Expand “Show retrieved chunks” to inspect what retrieval actually found.
+12. Expand "Show retrieved chunks" to inspect what retrieval actually found.
 
 ## Safety and engineering guardrails in V1
 
@@ -78,15 +270,9 @@ The dev and build scripts explicitly use Webpack. This is intentional: the origi
 - Document IDs are validated before query/delete operations.
 - API keys are server-side only; they are never sent to the browser.
 
-## Important limitation: local in-memory state
-
-Documents and embeddings live in a global in-memory Map inside the Node process. Restarting the server clears the knowledge base. This is intentional for V1 teaching.
-
-It is not a persistence mechanism, not multi-user safe, and not appropriate for a production deployment. A later version can replace `lib/store.ts` with a database/vector store without changing the conceptual RAG flow.
-
 ## Deploying to Vercel (persistent storage)
 
-The in-memory store does not work on Vercel: each request can run on a different serverless instance, so a document uploaded on one instance is missing on the next. When `DATABASE_URL` is set, `lib/store.ts` uses Postgres with the pgvector extension instead, creating its tables on first use.
+The in-memory store does not work on Vercel: each request can run on a different serverless instance, so a document uploaded on one instance is missing on the next. When `DATABASE_URL` is set, both `lib/store.ts` (DocQuery) and `lib/media/store.ts` (media agent) use Postgres with the pgvector extension instead, creating their tables on first use.
 
 1. Import the repository in Vercel and set `OPENAI_API_KEY`.
 2. Add a Neon database from the Vercel Marketplace (Storage → Create Database → Neon) and connect it to the project. This sets `DATABASE_URL`.
@@ -119,17 +305,3 @@ next dev --webpack
 ```
 
 If the terminal mentions `pdf.worker.mjs` or Turbopack while running V1, you are almost certainly running an older copy of the project rather than this package.
-
-## Verification
-
-Before handing off this ZIP, the code was reviewed in two explicit passes:
-
-### Pass 1 — Senior engineer / runtime correctness
-
-Reviewed module boundaries, request validation, PDF parsing, chunking, embedding batching, vector math, context construction, API error handling, state management, dependency/runtime assumptions, and the original PDF worker failure.
-
-### Pass 2 — AI architect / adversarial review
-
-Reviewed prompt-injection handling, unsupported-answer behavior, weak retrieval, embedding-dimension mismatch, context growth, accidental API spend, malformed PDFs, oversized documents, invalid document IDs, duplicate ingestion, deletion, client error handling, accessibility, and the limitations of in-memory state.
-
-This is still a V1 teaching application, not a production RAG service.
