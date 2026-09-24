@@ -1,46 +1,25 @@
 import { env } from "./config";
 import { embedTexts, openai } from "./openai";
-import { getDocument, getStore } from "./store";
+import { getStore } from "./store";
 import { RAG_SYSTEM_PROMPT } from "@/prompts/rag";
 import type { Chunk } from "./types";
 
-import { cosineSimilarity } from "./similarity";
-
-export function selectCandidates(query: string, documentId?: string) {
-  const normalizedId = documentId?.trim();
-  const candidates = normalizedId
-    ? (getDocument(normalizedId)?.chunks ?? [])
-    : Array.from(getStore().documents.values()).flatMap((doc) => doc.chunks);
-
-  return { query: query.trim(), candidates };
-}
-
-export async function retrieve(query: string, documentId?: string) {
-  const { candidates } = selectCandidates(query, documentId);
-  if (!candidates.length) return [] as Array<Chunk & { similarity: number }>;
+export async function retrieve(query: string, documentId?: string): Promise<Array<Chunk & { similarity: number }>> {
+  const store = getStore();
+  if (!(await store.hasAnyDocuments())) return [];
 
   const [queryEmbedding] = await embedTexts([query]);
-  const ranked = candidates
-    .map((chunk) => ({ chunk, similarity: cosineSimilarity(queryEmbedding, chunk.embedding) }))
-    .filter(({ similarity }) => similarity >= env().RAG_MIN_SIMILARITY)
-    .sort((a, b) => b.similarity - a.similarity)
-    .slice(0, Math.min(env().RAG_TOP_K, env().RAG_MAX_CONTEXT_CHUNKS));
-
-  return ranked.map(({ chunk, similarity }): Chunk & { similarity: number } => ({
-    id: chunk.id,
-    text: chunk.text,
-    documentId: chunk.documentId,
-    documentName: chunk.documentName,
-    pageNumber: chunk.pageNumber,
-    chunkIndex: chunk.chunkIndex,
-    similarity,
-  }));
+  return store.searchChunks(queryEmbedding, {
+    documentId: documentId?.trim() || undefined,
+    limit: Math.min(env().RAG_TOP_K, env().RAG_MAX_CONTEXT_CHUNKS),
+    minSimilarity: env().RAG_MIN_SIMILARITY,
+  });
 }
 
 export async function answerQuery(query: string, documentId?: string) {
   const chunks = await retrieve(query, documentId);
   if (!chunks.length) {
-    const hasDocuments = getStore().documents.size > 0;
+    const hasDocuments = await getStore().hasAnyDocuments();
     return {
       answer: hasDocuments
         ? "I couldn't find sufficiently relevant evidence in the indexed documents to answer that question."

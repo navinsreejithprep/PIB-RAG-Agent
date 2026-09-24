@@ -84,6 +84,16 @@ Documents and embeddings live in a global in-memory Map inside the Node process.
 
 It is not a persistence mechanism, not multi-user safe, and not appropriate for a production deployment. A later version can replace `lib/store.ts` with a database/vector store without changing the conceptual RAG flow.
 
+## Deploying to Vercel (persistent storage)
+
+The in-memory store does not work on Vercel: each request can run on a different serverless instance, so a document uploaded on one instance is missing on the next. When `DATABASE_URL` is set, `lib/store.ts` uses Postgres with the pgvector extension instead, creating its tables on first use.
+
+1. Import the repository in Vercel and set `OPENAI_API_KEY`.
+2. Add a Neon database from the Vercel Marketplace (Storage → Create Database → Neon) and connect it to the project. This sets `DATABASE_URL`.
+3. Redeploy.
+
+Vercel limits request bodies to 4.5 MB, so larger PDFs are rejected there even though `MAX_PDF_MB` defaults to 20.
+
 ## Troubleshooting the previous PDF worker error
 
 If you previously ran an older ZIP, do not install this version on top of that directory. Create a clean directory from this ZIP. If necessary:

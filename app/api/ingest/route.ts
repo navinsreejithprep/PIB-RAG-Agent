@@ -4,7 +4,7 @@ import { extractPdf } from "@/lib/pdf";
 import { chunkPages } from "@/lib/text";
 import { embedTexts } from "@/lib/openai";
 import { env } from "@/lib/config";
-import { addDocument, getDocument } from "@/lib/store";
+import { getStore } from "@/lib/store";
 import { publicErrorMessage } from "@/lib/http";
 
 export const runtime = "nodejs";
@@ -39,7 +39,7 @@ export async function POST(request: Request) {
     }
 
     const documentId = sha256(buffer);
-    if (getDocument(documentId)) {
+    if (await getStore().hasDocument(documentId)) {
       return NextResponse.json({
         ok: true,
         documentId,
@@ -96,7 +96,7 @@ export async function POST(request: Request) {
       embedding: embeddings[i],
     }));
 
-    addDocument({
+    await getStore().addDocument({
       id: documentId,
       name: safeName,
       pages: parsed.totalPages,
