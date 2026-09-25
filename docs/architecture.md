@@ -126,6 +126,12 @@ erDiagram
 
 `media_items` (this feature) and `documents`/`chunks` (DocQuery, unchanged) are independent tables in the same Postgres database when `DATABASE_URL` is set — they never join or share rows. `lib/media/tools/search.ts`'s `searchUploadedDocuments` bridges them at the application layer by wrapping both result shapes in a common `EvidenceItem` type, not at the database layer.
 
+`media_items` rows come from two independent producers sharing one table and one `MediaItem` shape:
+- `lib/media/seed-data.ts` — the synthetic sample dataset, auto-loaded on every dashboard visit (`POST /api/media/seed`, idempotent).
+- `lib/media/sources/pib.ts` — live Government of India press releases, loaded only when a user explicitly clicks "Pull latest PIB releases" (`POST /api/media/ingest-pib`, also idempotent by item ID). Kept as a separate, opt-in endpoint rather than merged into the auto-seed so the evaluation suite's known-content assumptions (`tests/evaluation-dataset.json`'s `expected_sources`) stay valid regardless of whether a user has pulled live data.
+
+Both producers write `MediaItem`s distinguishable at query time by their `source` field: synthetic items use fictional outlet names ("Sample Energy Wire", etc.); PIB items use real ministry names suffixed `(via PIB)`, or "Press Information Bureau" when a ministry name can't be extracted. No schema field currently marks "synthetic vs. live" explicitly — this was a deliberate scope call to avoid a schema change; the `source` string is the practical signal, and the UI's evidence list makes it visible without any lookup.
+
 ## Retrieval tuning (measured, not assumed)
 
 Cosine similarity between `text-embedding-3-small` embeddings does not cleanly separate "genuinely relevant" from "topically adjacent but off-topic" for short news text. Measured against the sample dataset (see `lib/media/tools/search.ts` for the script this came from):

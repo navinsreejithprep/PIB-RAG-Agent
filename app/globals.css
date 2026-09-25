@@ -62,4 +62,6 @@
 .evidence-row{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;font-size:12px;color:#c9d5e5;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.04)}
 .evidence-row:last-child{border-bottom:0}
 .small{font-size:11px}
+.pib-panel-body p{margin:0 0 12px;font-size:12px;line-height:1.6}
+.pib-panel-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 @media(max-width:860px){.media-shell{padding:16px}.brief-grid{grid-template-columns:1fr}.media-query-bar form{flex-direction:column}}

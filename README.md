@@ -76,7 +76,7 @@ Each tool is documented in its source file with a `USER PROBLEM → AI CAPABILIT
 | Tool | File | Problem it solves |
 |---|---|---|
 | Query Understanding | `lib/media/tools/intent.ts` | Route the request without over- or under-processing simple asks |
-| News Search Tool | `lib/media/tools/search.ts` (`newsSearch`, `searchByTopic`, `searchByDateRange`, `searchBySource`) | Find relevant coverage without manual reading |
+| News Search Tool | `lib/media/tools/search.ts` (`newsSearch`, `searchByTopic`, `searchByDateRange`, `searchBySource`), searching whatever's indexed — synthetic sample data plus any live PIB releases pulled in via `lib/media/sources/pib.ts` | Find relevant coverage without manual reading |
 | Document Search Tool | `lib/media/tools/search.ts` (`searchUploadedDocuments`) | Include the user's own uploaded PDFs (DocQuery) as evidence |
 | Context Retrieval Tool | `lib/media/tools/search.ts` (`retrieveBackground`) | Pull definitions/explainers, not just headlines |
 | Article Clustering Tool | `lib/media/tools/cluster.ts` | Stop near-duplicate coverage from looking like separate developments |
@@ -87,7 +87,9 @@ Each tool is documented in its source file with a `USER PROBLEM → AI CAPABILIT
 
 ## 10. Data sources
 
-**All data is synthetic sample data**, generated for this prototype — see `data/sample-articles.json` (24 articles, fictional outlets and companies, `example.com` URLs) and `data/sample-background.json` (5 reference explainers). The dataset is built around a coherent domain (India's renewable energy sector) and is deliberately constructed with:
+Two sources feed the same searchable index, clearly distinguishable by their `source` field in the UI:
+
+**Synthetic sample data** (default, always loaded) — see `data/sample-articles.json` (24 articles, fictional outlets and companies, `example.com` URLs) and `data/sample-background.json` (5 reference explainers). Built around a coherent domain (India's renewable energy sector) and deliberately constructed with:
 
 - The **same event reported by multiple outlets** with slightly different framing (A01/A02/A03/A04).
 - **Genuinely conflicting figures** for the same fact (₹1.2 lakh crore vs. ₹1.5 lakh crore central support).
@@ -95,7 +97,16 @@ Each tool is documented in its source file with a `USER PROBLEM → AI CAPABILIT
 - An **embedded prompt-injection attempt** inside one article's text (A20), to test that retrieved content is treated as data, not instructions.
 - At least one topic with **no coverage in the dataset** (nuclear energy), to test honest "insufficient evidence" behavior.
 
-The architecture supports swapping in a real news API later: `lib/media/tools/search.ts`'s functions are the seam — replace what backs `getMediaStore().search()` and nothing above that layer needs to change.
+**Live data: Press Information Bureau (Government of India)** (optional, pulled on demand) — `lib/media/sources/pib.ts` fetches the previous day's English PIB press releases via a community-maintained mirror ([github.com/gkgangavarapu/pibindia-rss](https://github.com/gkgangavarapu/pibindia-rss)), free and keyless, with **full article text**, not just a headline/snippet (unlike most free news APIs — see the comparison this was chosen from in the section below). Click "Pull latest PIB releases" on the `/media` dashboard, or `curl -X POST localhost:3000/api/media/ingest-pib`.
+
+Why PIB, and why not the more commonly recommended options: most free news APIs (NewsAPI.org, GNews, NewsData.io) either restrict the free tier to non-production use, or only return a short snippet rather than full article body text — which would weaken the comparison and citation-verification tools, since there'd be little actual text to compare or verify against. PIB releases are primary-source government announcements, not licensed news content, so they carry no such restriction, and the community mirror above provides them as full, clean English text.
+
+**Honest limitations of the PIB integration** (see `lib/media/sources/pib.ts` for the full reasoning):
+- It is **not filterable by topic server-side** — it's whatever the Government of India published in the last 24 hours, across every ministry. On any given day it may contain zero renewable-energy items (tested: a live pull on 2026-09-25 returned 59 releases, of which exactly 1 was energy-related).
+- **No cross-outlet comparison applies to PIB releases** — every item ultimately comes from one source (the Indian government), so the Source Comparison Tool has nothing to compare it against unless the same story also appears in the synthetic dataset.
+- Re-pulling on different days **accumulates a real historical archive** (existing items are skipped, not duplicated) rather than replacing what's there.
+
+The architecture supports adding a further, broader news API later: `lib/media/tools/search.ts`'s functions are the seam — add another source alongside `lib/media/sources/pib.ts` and nothing above that layer needs to change.
 
 ## 11. Evaluation methodology
 
@@ -152,7 +163,8 @@ Do not quote a "research time reduced by X%" figure until a real manual baseline
 
 ## 14. Limitations
 
-- **Sample data only.** The news dataset is synthetic; connecting a real news API requires replacing the search layer (see [Data sources](#10-data-sources)) and re-running evaluation against real content before trusting the numbers.
+- **Evaluation numbers are against synthetic data only.** The 24-case evaluation suite (see below) was run against the synthetic dataset, not live PIB data — PIB coverage varies day to day and has no known-correct `expected_sources`, so it can't be scored the same way. Treat the live PIB integration as functionally tested (see `tests/media-pib.test.ts` and the manual run in the README's PIB section) but not evaluation-scored.
+- **PIB is a single source.** It gives real, full-text government announcements, but comparison/conflict-detection only shows its value on the synthetic dataset (or if a PIB story happens to also appear there). A broader multi-outlet real-data source is the natural next step — see [Future roadmap](#17-future-roadmap).
 - **Clustering can over-merge topically-adjacent-but-distinct articles.** Embedding-similarity clustering on short news text is not perfect; in testing, articles about different auctions in the same region occasionally clustered together. This is a known, measured limitation, not a hidden one.
 - **Retrieval cannot perfectly separate on-topic from off-topic by similarity score alone.** `text-embedding-3-small` cosine similarity for short, topically-adjacent news does not cleanly separate a genuinely relevant query from a related-but-different one (measured: an off-topic query's best match scored ~0.50, inside the range of genuinely relevant matches for a different query). The brief-writing prompt, not the retrieval threshold, is what is responsible for saying evidence is insufficient — see `lib/media/tools/search.ts` for the calibration numbers.
 - **No persistence for agent runs.** Each query re-runs the full pipeline; there's no caching or run history yet.
@@ -181,10 +193,11 @@ For persistent storage (required on Vercel), set `DATABASE_URL` to a Postgres co
 4. Read the executive brief. Expand **Key developments** to see the underlying event clusters and their sources. Expand **Source comparison** to see where outlets agreed or conflicted (try the clean-energy-framework funding figure: ₹1.2 lakh crore vs. ₹1.5 lakh crore). Check the confidence score and notes at the top.
 5. Try `"What is India's nuclear energy capacity target?"` to see the honest "evidence insufficient" behavior.
 6. Try `"Summarize the opinion piece about rooftop solar and distribution companies"` to see prompt-injection resistance — article A20 contains a hidden instruction that the agent should not follow.
+7. Click **"Pull latest PIB releases"** to index real, live Government of India press releases, then ask a question about whatever's actually in that day's releases (check the retrieved-sources list for anything with `(via PIB)` as its source) — the brief will cite and summarize a real government announcement, not the synthetic dataset.
 
 ## 17. Future roadmap
 
-- Replace the sample dataset with a real news API (NewsAPI, GNews, or an RSS pipeline) behind the same `lib/media/tools/search.ts` seam.
+- Add a second, multi-outlet real news source (e.g. NewsData.io filtered to `country=in`) alongside PIB, so real cross-source comparison becomes possible on live data, not just the synthetic dataset. PIB (`lib/media/sources/pib.ts`) is the first real source, added as an explicit opt-in pull rather than the default, so the tested/evaluated demo flow stays deterministic.
 - Cache/persist agent runs so repeat questions don't re-run the full pipeline.
 - A real manual-baseline timing study (see [Baseline methodology](#13-baseline-methodology)).
 - Reranking and hybrid (keyword + semantic) retrieval for better precision than cosine similarity alone.

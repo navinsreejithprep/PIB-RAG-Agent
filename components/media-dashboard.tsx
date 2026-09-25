@@ -23,6 +23,8 @@ async function readJson(response: Response) {
 export default function MediaDashboard() {
   const [seedStatus, setSeedStatus] = useState("Preparing sample dataset…");
   const [datasetStats, setDatasetStats] = useState<{ topics: string[]; sources: string[]; count: number } | null>(null);
+  const [pibStatus, setPibStatus] = useState<string | null>(null);
+  const [pibBusy, setPibBusy] = useState(false);
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [activity, setActivity] = useState<ActivityEvent[]>([]);
@@ -51,6 +53,23 @@ export default function MediaDashboard() {
     })();
     return () => abortRef.current?.abort();
   }, []);
+
+  async function pullPibFeed() {
+    if (pibBusy) return;
+    setPibBusy(true);
+    setPibStatus("Pulling live PIB press releases…");
+    try {
+      const response = await fetch("/api/media/ingest-pib", { method: "POST" });
+      const data = await readJson(response);
+      if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : "Could not pull the PIB feed.");
+      setPibStatus(typeof data.message === "string" ? data.message : "PIB feed pulled.");
+      await refreshStats();
+    } catch (err) {
+      setPibStatus(err instanceof Error ? err.message : "Could not pull the PIB feed.");
+    } finally {
+      setPibBusy(false);
+    }
+  }
 
   async function ask(q: string) {
     const trimmed = q.trim();
@@ -140,6 +159,24 @@ export default function MediaDashboard() {
             <div className="muted sample-warning">Synthetic sample data — see data/sample-articles.json</div>
           </div>
         </header>
+
+        <section className="media-panel pib-panel">
+          <div className="panel-head"><h2>Live data: Press Information Bureau (Government of India)</h2></div>
+          <div className="panel-body pib-panel-body">
+            <p className="muted">
+              Optional. Pulls yesterday&rsquo;s English PIB press releases (real government announcements, full text, free) into the same
+              searchable index as the sample data below. Coverage is whatever the government actually published — it will not always include
+              renewable-energy items, and since every release ultimately comes from one source (the Indian government), cross-outlet
+              comparison only applies to the sample dataset, not PIB releases. Re-pulling on different days builds a real historical archive.
+            </p>
+            <div className="pib-panel-row">
+              <button className="btn" type="button" disabled={pibBusy} onClick={() => void pullPibFeed()}>
+                {pibBusy ? "Pulling…" : "Pull latest PIB releases"}
+              </button>
+              {pibStatus && <span className="muted small">{pibStatus}</span>}
+            </div>
+          </div>
+        </section>
 
         <section className="media-query-bar">
           <form onSubmit={(e) => { e.preventDefault(); void ask(query); }}>
