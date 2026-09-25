@@ -142,7 +142,14 @@ function postgresStore(databaseUrl: string): MediaStore {
       kind: row.kind as MediaItem["kind"],
       title: row.title as string,
       source: row.source as string,
-      date: (row.date as string).slice(0, 10),
+      // The neon serverless driver doesn't consistently hand back Postgres
+      // `date` columns as strings -- it can return a native Date object
+      // depending on the query path, and .slice() on that threw at runtime
+      // in production ("a.date.slice is not a function") for every search()
+      // result. new Date(...) accepts both a string and an existing Date,
+      // so this is safe either way (same pattern already used for
+      // uploaded_at in lib/store.ts).
+      date: new Date(row.date as string | Date).toISOString().slice(0, 10),
       url: row.url as string,
       topic: row.topic as string,
       content: row.content as string,
