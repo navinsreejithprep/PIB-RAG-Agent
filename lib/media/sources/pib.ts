@@ -121,6 +121,7 @@ export async function fetchPibReleases(): Promise<PibFetchResult> {
     if (!content || content.length < 40) continue; // no usable body text
 
     const date = pubDate ? parseRssDate(pubDate) : "";
+    if (!date) continue; // unparseable/missing date; the store's date column is NOT NULL
     const department = extractDepartment(descriptionMatch[1]);
 
     items.push({

@@ -57,4 +57,21 @@ describe("fetchPibReleases", () => {
     const { items } = await fetchPibReleases();
     expect(items).toEqual([]);
   });
+
+  it("skips an item with a missing or unparseable pubDate instead of producing an empty date", async () => {
+    // Regression test: MediaItem.date feeds a NOT NULL `date` column
+    // (lib/media/store.ts) and is unnest()'d as ::date[] in the bulk
+    // upsert — an empty string there would fail the whole insert batch,
+    // not just this one item.
+    const badItem = `<item>
+      <title>Some release with a broken date</title>
+      <link>https://www.pib.gov.in/PressReleseDetailm.aspx?PRID=9999999</link>
+      <guid isPermaLink="false">pib-9999999</guid>
+      <pubDate>not a real date</pubDate>
+      <description><![CDATA[<table><tr><td>Some Ministry<div></div><div>${"x".repeat(60)}</div></tr></table>]]></description>
+    </item>`;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(`<rss><channel>${badItem}</channel></rss>`, { status: 200 })));
+    const { items } = await fetchPibReleases();
+    expect(items).toEqual([]);
+  });
 });

@@ -103,10 +103,15 @@ The architecture supports adding a further, broader news API later: `lib/media/t
 
 ### Accumulating history: storage requirements
 
-Building up more than one day of PIB coverage needs two things, both already built into this repo but not both wired together yet:
+Building up more than one day of PIB coverage needs two things — both now built:
 
-1. **Persistent storage.** `lib/media/store.ts` already supports Postgres + pgvector via `DATABASE_URL` (the same pattern as DocQuery's store, and the same Neon database already connected to this project on Vercel would work — `media_items` is a separate table, created automatically on first use). Locally, with no `DATABASE_URL` set, data lives in memory and is lost on every restart, so "accumulated history" only really means anything once this is deployed (or `DATABASE_URL` is set locally too).
-2. **A scheduled trigger.** Nothing currently calls `/api/media/ingest-pib` on its own — a human has to click the button (or hit the endpoint) once per day. For real, unattended accumulation, the missing piece is a daily cron: e.g. a [Vercel Cron Job](https://vercel.com/docs/cron-jobs) hitting `POST /api/media/ingest-pib` once a morning, or an external scheduler (GitHub Actions on a schedule, cron-job.org, etc.) if not deployed on Vercel. Not implemented in this prototype — noted here rather than left unexplained.
+1. **Persistent storage.** `lib/media/store.ts` supports Postgres + pgvector via `DATABASE_URL` (the same pattern as DocQuery's store, and the same Neon database already connected to this project on Vercel — `media_items` is a separate table, created automatically on first use). Locally, with no `DATABASE_URL` set, data lives in memory and is lost on every restart, so "accumulated history" only means anything once this is deployed (or `DATABASE_URL` is set locally too).
+2. **A scheduled trigger.** `vercel.json` defines a daily [Vercel Cron Job](https://vercel.com/docs/cron-jobs) that sends `GET /api/media/ingest-pib` once a day (`0 7 * * *` = 07:00 UTC / 12:30 IST — scheduled with margin after the upstream feed's observed ~10:42 IST rebuild time; Vercel Hobby's cron timing is imprecise within the scheduled hour, hence the buffer). This only runs once the app is **deployed to Production on Vercel** — Vercel Cron does not fire against Preview deployments or local dev.
+
+**Two things specific to this getting set up correctly:**
+
+- **`CRON_SECRET`.** Vercel signs every cron invocation with `Authorization: Bearer <CRON_SECRET>`; the route's `GET` handler checks this and returns 401 if it's missing or wrong (and 501 if `CRON_SECRET` isn't configured at all — it fails closed, not open, so nobody can trigger paid embedding calls by just visiting the URL). Set as an environment variable, separate from the manual "Pull latest releases" button, which uses `POST` and isn't gated by this.
+- **Vercel Hobby's 10-second function timeout applies regardless of `maxDuration`.** The route was measured and optimized to fit: fetching the feed, embedding all of a day's releases in one call instead of several, and writing them with a single bulk `INSERT ... ON CONFLICT DO NOTHING` (not one round trip per item) together take roughly 5-6 seconds locally. If it ever does time out in practice, the fix is either the Pro plan's longer `maxDuration`, or trimming the route further (e.g. dropping the trailing item-count query from the response).
 
 ## 11. Evaluation methodology
 
@@ -200,7 +205,6 @@ Since PIB content changes daily, there's no fixed script that always shows every
 ## 17. Future roadmap
 
 - Add a second, multi-outlet real news source (e.g. NewsData.io filtered to `country=in`) alongside PIB, so real cross-source comparison becomes possible on live data, not just the synthetic evaluation dataset.
-- A scheduled daily pull (Vercel Cron or similar) against `/api/media/ingest-pib`, so multi-day history accumulates without a human clicking a button — see [Accumulating history](#accumulating-history-storage-requirements).
 - Cache/persist agent runs so repeat questions don't re-run the full pipeline.
 - A real manual-baseline timing study (see [Baseline methodology](#13-baseline-methodology)).
 - Reranking and hybrid (keyword + semantic) retrieval for better precision than cosine similarity alone.
@@ -292,7 +296,8 @@ The in-memory store does not work on Vercel: each request can run on a different
 
 1. Import the repository in Vercel and set `OPENAI_API_KEY`.
 2. Add a Neon database from the Vercel Marketplace (Storage → Create Database → Neon) and connect it to the project. This sets `DATABASE_URL`.
-3. Redeploy.
+3. Set `CRON_SECRET` to a random value (e.g. `openssl rand -hex 32`) if you want the scheduled daily PIB pull (`vercel.json`) to run — see [Accumulating history](#accumulating-history-storage-requirements). Not required for the app to otherwise work.
+4. Redeploy.
 
 Vercel limits request bodies to 4.5 MB, so larger PDFs are rejected there even though `MAX_PDF_MB` defaults to 20.
 

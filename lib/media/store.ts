@@ -104,26 +104,35 @@ function postgresStore(databaseUrl: string): MediaStore {
 
   let schemaReady: Promise<void> | undefined;
   function ensureSchema() {
-    schemaReady ??= (async () => {
-      await sql`CREATE EXTENSION IF NOT EXISTS vector`;
-      await sql`
-        CREATE TABLE IF NOT EXISTS media_items (
-          id text PRIMARY KEY,
-          kind text NOT NULL,
-          title text NOT NULL,
-          source text NOT NULL,
-          date date NOT NULL,
-          url text NOT NULL,
-          topic text NOT NULL,
-          content text NOT NULL,
-          embedding vector NOT NULL
-        )`;
-      await sql`CREATE INDEX IF NOT EXISTS media_items_topic_idx ON media_items (topic)`;
-      await sql`CREATE INDEX IF NOT EXISTS media_items_date_idx ON media_items (date)`;
-    })().catch((error) => {
-      schemaReady = undefined;
-      throw error;
-    });
+    // All four DDL statements as one HTTP round trip (sql.transaction), not
+    // four. This module-level cache only survives within one warm serverless
+    // instance -- a cron-triggered cold start (see /api/media/ingest-pib and
+    // vercel.json) pays this cost on every invocation, so it needs to be as
+    // cheap as possible to help the whole route fit inside Vercel Hobby's
+    // 10-second function timeout.
+    schemaReady ??= sql
+      .transaction([
+        sql`CREATE EXTENSION IF NOT EXISTS vector`,
+        sql`
+          CREATE TABLE IF NOT EXISTS media_items (
+            id text PRIMARY KEY,
+            kind text NOT NULL,
+            title text NOT NULL,
+            source text NOT NULL,
+            date date NOT NULL,
+            url text NOT NULL,
+            topic text NOT NULL,
+            content text NOT NULL,
+            embedding vector NOT NULL
+          )`,
+        sql`CREATE INDEX IF NOT EXISTS media_items_topic_idx ON media_items (topic)`,
+        sql`CREATE INDEX IF NOT EXISTS media_items_date_idx ON media_items (date)`,
+      ])
+      .then(() => undefined)
+      .catch((error) => {
+        schemaReady = undefined;
+        throw error;
+      });
     return schemaReady;
   }
 
@@ -143,22 +152,34 @@ function postgresStore(databaseUrl: string): MediaStore {
   return {
     async seed(newItems, embeddings) {
       await ensureSchema();
-      let inserted = 0;
-      let skipped = 0;
-      for (let i = 0; i < newItems.length; i++) {
-        const item = newItems[i];
-        const existing = await sql`SELECT 1 FROM media_items WHERE id = ${item.id}`;
-        if (existing.length > 0) {
-          skipped++;
-          continue;
-        }
-        await sql`
-          INSERT INTO media_items (id, kind, title, source, date, url, topic, content, embedding)
-          VALUES (${item.id}, ${item.kind}, ${item.title}, ${item.source}, ${item.date}, ${item.url}, ${item.topic}, ${item.content}, ${toVector(embeddings[i])}::vector)
-          ON CONFLICT (id) DO NOTHING`;
-        inserted++;
-      }
-      return { inserted, skipped };
+      if (!newItems.length) return { inserted: 0, skipped: 0 };
+
+      // A single bulk upsert via unnest(), not one SELECT+INSERT round trip
+      // per item. This matters beyond general efficiency: Vercel's Hobby
+      // plan hard-caps serverless functions at 10 seconds regardless of
+      // maxDuration, and a scheduled daily PIB pull (see /api/media/ingest-pib
+      // and vercel.json) needs to embed and store dozens of items within
+      // that budget. The previous per-item loop made up to 2*N sequential
+      // round trips to Postgres; this makes one.
+      const rows = await sql`
+        INSERT INTO media_items (id, kind, title, source, date, url, topic, content, embedding)
+        SELECT id, kind, title, source, date, url, topic, content, embedding::vector
+        FROM unnest(
+          ${newItems.map((i) => i.id)}::text[],
+          ${newItems.map((i) => i.kind)}::text[],
+          ${newItems.map((i) => i.title)}::text[],
+          ${newItems.map((i) => i.source)}::text[],
+          ${newItems.map((i) => i.date)}::date[],
+          ${newItems.map((i) => i.url)}::text[],
+          ${newItems.map((i) => i.topic)}::text[],
+          ${newItems.map((i) => i.content)}::text[],
+          ${embeddings.map(toVector)}::text[]
+        ) AS t(id, kind, title, source, date, url, topic, content, embedding)
+        ON CONFLICT (id) DO NOTHING
+        RETURNING id`;
+
+      const inserted = rows.length;
+      return { inserted, skipped: newItems.length - inserted };
     },
 
     async count() {
