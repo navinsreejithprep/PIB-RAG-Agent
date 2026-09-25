@@ -1,8 +1,10 @@
 # Executive Media Intelligence Agent
 
-An agentic RAG prototype that turns a pile of news coverage into an evidence-backed executive brief — with source clustering, cross-source comparison, impact analysis, and citation verification before anything is shown to the user. Built on top of, and alongside, **DocQuery**, a simpler PDF question-answering chatbot (see [V1 — DocQuery](#v1--docquery-pdf-chatbot) below). Both apps run from this one repository.
+**Live demo: [ra-gchatbot1.vercel.app/media](https://ra-gchatbot1.vercel.app/media)** — runs on real, live Government of India press releases, pulled daily by a scheduled job. (The simpler PDF chatbot this was built on top of is at [ra-gchatbot1.vercel.app](https://ra-gchatbot1.vercel.app), see [V1 — DocQuery](#v1--docquery-pdf-chatbot) below.)
 
-> **All news content in this prototype is synthetic sample data**, written for demonstration. See [Data sources](#data-sources).
+An agentic RAG prototype that turns a pile of news coverage into an evidence-backed executive brief — with source clustering, cross-source comparison, impact analysis, and citation verification before anything is shown to the user. Both apps run from this one repository.
+
+> The live app runs on **real live data** — India's Press Information Bureau, pulled automatically every day (see [Data sources](#10-data-sources)). A synthetic sample dataset also exists in the repo, used only by the automated evaluation suite for reproducible, known-answer scoring — it is not shown in the live app.
 
 ## 1. Product overview
 
