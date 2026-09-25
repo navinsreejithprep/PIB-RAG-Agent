@@ -62,6 +62,38 @@ EXECUTIVE BRIEF (streamed to the UI with a live activity log)
 
 This is a **fixed, explainable pipeline**, not a free-form autonomous agent loop. Query-understanding output (intent, date range) steers filtering and status labels; every other step runs in the same order every time, with clear, bounded LLM-call counts. See [docs/architecture.md](docs/architecture.md) for the full diagram, each tool's exact inputs/outputs, and the extension points for making step-selection more dynamic later.
 
+### 7a. Autonomous agent mode
+
+A second, genuinely autonomous mode also exists, toggled in the `/media` UI ("Fixed pipeline" vs. "Autonomous agent") and served by a separate endpoint (`POST /api/media/agent`) so the fixed pipeline above — tested, evaluated, unchanged — isn't touched by any of this.
+
+```
+USER QUESTION
+   ↓
+lib/media/agent/loop.ts — hand-rolled ReAct loop (ONLY this part is autonomous)
+   the model decides, round by round: call search_news / search_background /
+   search_uploaded_documents / compare_sources, or stop and summarize
+   ↓ (bounded: 8 rounds max, 90s wall-clock max, forced wrap-up past either)
+lib/media/agent/orchestrator.ts — same deterministic finishing phase as the
+   fixed pipeline: cluster → compare → impact → brief → verify citations
+   ↓
+EXECUTIVE BRIEF (same shape as the fixed pipeline's output; UI reuses the
+   same brief/clusters/evidence/confidence rendering either way), plus a
+   live "Agent's live decisions" trace panel streaming each tool call as it
+   happens
+```
+
+**What's actually autonomous here, and what isn't:** only evidence-gathering is autonomous — which searches to run, how many, when to stop, whether to compare two sources it found. Clustering, impact analysis, brief-writing, and citation verification are the exact same deterministic functions the fixed pipeline uses, run on whatever the loop gathered. This is a deliberate scope decision: there's no autonomy benefit to letting the model "decide" whether to skip citation verification, and real safety cost if it could.
+
+**Why hand-rolled, not a framework:** the installed OpenAI SDK has an automatic tool-calling loop (`runTools()`), but only for the older Chat Completions API — the newer Responses API this project uses throughout (for its structured-output support) has no equivalent, confirmed by inspecting the SDK's own type definitions rather than assumed. The loop is ~150 lines: call the model, execute any tool calls it requests, feed results back in, repeat until it replies with plain text instead of a tool call.
+
+**Safety bounds, not just a nice-to-have:** an uncapped agent loop is a real cost and availability risk, not just a quality one. `MAX_ROUNDS = 8` and `MAX_LOOP_MS = 90_000` are enforced in code, not just prompted for — when either is hit, the next call omits `tools` entirely (not just `tool_choice: "none"`), so the model has no way to keep calling tools even if it tried. Tested against an adversarial mock that always wants to call another tool (`tests/media-agent-loop.test.ts`): the loop still terminates within the cap.
+
+**Measured, not assumed, on real live PIB data:**
+- A well-scoped question ("what did the Power Ministry announce?") resolved in 5 rounds, ~44s, confidence 100%, output structurally identical in quality to the fixed pipeline's.
+- An off-topic question (nuclear capacity target, not covered by any indexed source) initially took 8 tool calls trying creative rephrasings before concluding "insufficient evidence" — a real efficiency gap found by testing, not assumed away. One added instruction ("if 3+ varied searches all fail, stop trying new phrasings") measurably reduced this in the same test case.
+- One real run surfaced a genuine RAG failure mode: the brief cited a real, existing source for a plausible, factually-real claim ("100 GW nuclear by 2047") that source didn't actually contain — the model blended retrieved text with its own general knowledge. The independent citation-verification step caught it and dropped confidence accordingly (0.67, with the specific unsupported claim named in the citation checks). This is the expected behavior of the safety net, not a bug: no RAG system eliminates this failure mode at generation time, and this project's whole design treats verification-after-generation as the mitigation rather than something scored 100%.
+- A real, pre-existing bug in `lib/media/store.ts` surfaced by giving the model free rein over the `source` filter: it was an exact-string match, and PIB items are stored with a `(via PIB)` suffix the model couldn't know about — a filter value as reasonable as `"Ministry of Power"` silently returned zero results. Fixed to a case-insensitive substring match (both backends); this had been a dormant bug in the fixed pipeline too, just never exercised since intent classification there never sets a source filter.
+
 ## 8. RAG architecture
 
 Two independent stores share the same building blocks (`lib/openai.ts` embeddings, `lib/similarity.ts` cosine similarity):

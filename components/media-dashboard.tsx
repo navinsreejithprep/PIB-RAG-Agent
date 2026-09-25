@@ -4,6 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import type { AgentState } from "@/lib/media/types";
 
 type ActivityEvent = { step: string; label: string; status: "running" | "done"; detail?: string };
+type TraceEvent =
+  | { type: "round_start"; round: number }
+  | { type: "tool_call"; round: number; tool: string; args: Record<string, unknown> }
+  | { type: "tool_result"; round: number; tool: string; summary: string }
+  | { type: "wrap_up"; reason: "round_cap" | "time_cap" };
+type Mode = "fixed" | "autonomous";
 
 const EXAMPLE_QUERIES = [
   "What are today's major government announcements?",
@@ -12,7 +18,16 @@ const EXAMPLE_QUERIES = [
   "What is India's nuclear energy capacity target?",
 ];
 
-const STEP_ORDER = ["understanding", "searching", "clustering", "context", "comparing", "impact", "brief", "verifying"];
+const FIXED_STEP_ORDER = ["understanding", "searching", "clustering", "context", "comparing", "impact", "brief", "verifying"];
+const AUTONOMOUS_STEP_ORDER = ["understanding", "research", "clustering", "comparing", "impact", "brief", "verifying"];
+
+function toolLine(t: TraceEvent): string | null {
+  if (t.type === "tool_call") {
+    const argsText = Object.entries(t.args).filter(([, v]) => v !== null && v !== undefined && v !== "").map(([k, v]) => `${k}: ${JSON.stringify(v)}`).join(", ");
+    return `${t.tool}(${argsText})`;
+  }
+  return null;
+}
 
 async function readJson(response: Response) {
   const data: unknown = await response.json().catch(() => ({}));
@@ -25,8 +40,10 @@ export default function MediaDashboard() {
   const [pibStatus, setPibStatus] = useState("Pulling live PIB press releases…");
   const [pibBusy, setPibBusy] = useState(false);
   const [query, setQuery] = useState("");
+  const [mode, setMode] = useState<Mode>("fixed");
   const [busy, setBusy] = useState(false);
   const [activity, setActivity] = useState<ActivityEvent[]>([]);
+  const [trace, setTrace] = useState<TraceEvent[]>([]);
   const [state, setState] = useState<AgentState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastQuery, setLastQuery] = useState("");
@@ -71,11 +88,12 @@ export default function MediaDashboard() {
     setBusy(true);
     setError(null);
     setActivity([]);
+    setTrace([]);
     setState(null);
     setLastQuery(trimmed);
 
     try {
-      const response = await fetch("/api/media/query", {
+      const response = await fetch(mode === "autonomous" ? "/api/media/agent" : "/api/media/query", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query: trimmed }),
@@ -105,8 +123,11 @@ export default function MediaDashboard() {
             setActivity((prev) => {
               const next = prev.filter((e) => e.step !== step);
               next.push({ step, label, status, detail });
-              return next.sort((a, b) => STEP_ORDER.indexOf(a.step) - STEP_ORDER.indexOf(b.step));
+              const order = mode === "autonomous" ? AUTONOMOUS_STEP_ORDER : FIXED_STEP_ORDER;
+              return next.sort((a, b) => order.indexOf(a.step) - order.indexOf(b.step));
             });
+          } else if (event.type === "trace") {
+            setTrace((prev) => [...prev, event.event as TraceEvent]);
           } else if (event.type === "result") {
             setState(event.state as AgentState);
           } else if (event.type === "error") {
@@ -159,6 +180,20 @@ export default function MediaDashboard() {
           ultimately comes from one source, cross-outlet comparison has nothing to compare against yet.
         </p>
 
+        <section className="media-mode-toggle" role="radiogroup" aria-label="Agent mode">
+          <button type="button" className={`mode-btn ${mode === "fixed" ? "active" : ""}`} disabled={busy} onClick={() => setMode("fixed")} aria-pressed={mode === "fixed"}>
+            Fixed pipeline
+          </button>
+          <button type="button" className={`mode-btn ${mode === "autonomous" ? "active" : ""}`} disabled={busy} onClick={() => setMode("autonomous")} aria-pressed={mode === "autonomous"}>
+            Autonomous agent
+          </button>
+          <span className="muted small mode-caption">
+            {mode === "fixed"
+              ? "Same 8 steps run every time, in the same order — predictable, fully evaluated."
+              : "The model decides which searches to run and when it has enough evidence — bounded to 8 rounds / 90s of research."}
+          </span>
+        </section>
+
         <section className="media-query-bar">
           <form onSubmit={(e) => { e.preventDefault(); void ask(query); }}>
             <input
@@ -183,7 +218,7 @@ export default function MediaDashboard() {
           <section className="media-panel activity-panel" aria-label="Research status">
             <div className="panel-head"><h2>Research status</h2></div>
             <ol className="activity-log">
-              {STEP_ORDER.map((stepId) => {
+              {(mode === "autonomous" ? AUTONOMOUS_STEP_ORDER : FIXED_STEP_ORDER).map((stepId) => {
                 const event = activity.find((e) => e.step === stepId);
                 if (!event) return null;
                 return (
@@ -195,6 +230,21 @@ export default function MediaDashboard() {
                 );
               })}
             </ol>
+          </section>
+        )}
+
+        {mode === "autonomous" && trace.length > 0 && (
+          <section className="media-panel trace-panel" aria-label="Agent research trace">
+            <div className="panel-head"><h2>Agent's live decisions</h2></div>
+            <div className="panel-body trace-log">
+              {trace.map((t, i) => {
+                if (t.type === "round_start") return <div className="trace-round" key={i}>Round {t.round}</div>;
+                if (t.type === "tool_call") return <div className="trace-call" key={i}>→ {toolLine(t)}</div>;
+                if (t.type === "tool_result") return <div className="trace-result" key={i}>← {t.summary}</div>;
+                if (t.type === "wrap_up") return <div className="trace-wrapup" key={i}>⏱ Research limit reached ({t.reason.replace(/_/g, " ")}) — wrapping up</div>;
+                return null;
+              })}
+            </div>
           </section>
         )}
 

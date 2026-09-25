@@ -34,7 +34,15 @@ declare global {
 function matchesFilters(item: MediaItem, options: MediaSearchOptions) {
   if (options.kind && item.kind !== options.kind) return false;
   if (options.topic && item.topic !== options.topic) return false;
-  if (options.source && item.source !== options.source) return false;
+  // Case-insensitive substring, not exact equality: source names carry
+  // suffixes callers can't be expected to know exactly (e.g. PIB items are
+  // stored as "Ministry of Power (via PIB)"; an exact match against
+  // "Ministry of Power" -- a wholly reasonable filter value -- would
+  // otherwise silently return nothing. Confirmed live: the autonomous
+  // agent's search_news tool call with source: "Ministry of Power" got 0
+  // results under exact matching, then had to spend an extra round
+  // recovering by dropping the filter.
+  if (options.source && !item.source.toLowerCase().includes(options.source.toLowerCase())) return false;
   if (options.startDate && item.date < options.startDate) return false;
   if (options.endDate && item.date > options.endDate) return false;
   return true;
@@ -218,7 +226,7 @@ function postgresStore(databaseUrl: string): MediaStore {
           FROM media_items
           WHERE (${options.kind ?? null}::text IS NULL OR kind = ${options.kind ?? null})
             AND (${options.topic ?? null}::text IS NULL OR topic = ${options.topic ?? null})
-            AND (${options.source ?? null}::text IS NULL OR source = ${options.source ?? null})
+            AND (${options.source ?? null}::text IS NULL OR source ILIKE '%' || ${options.source ?? null} || '%')
             AND (${options.startDate ?? null}::date IS NULL OR date >= ${options.startDate ?? null}::date)
             AND (${options.endDate ?? null}::date IS NULL OR date <= ${options.endDate ?? null}::date)
           ORDER BY date DESC
@@ -233,7 +241,7 @@ function postgresStore(databaseUrl: string): MediaStore {
         FROM media_items
         WHERE (${options.kind ?? null}::text IS NULL OR kind = ${options.kind ?? null})
           AND (${options.topic ?? null}::text IS NULL OR topic = ${options.topic ?? null})
-          AND (${options.source ?? null}::text IS NULL OR source = ${options.source ?? null})
+          AND (${options.source ?? null}::text IS NULL OR source ILIKE '%' || ${options.source ?? null} || '%')
           AND (${options.startDate ?? null}::date IS NULL OR date >= ${options.startDate ?? null}::date)
           AND (${options.endDate ?? null}::date IS NULL OR date <= ${options.endDate ?? null}::date)
           AND 1 - (embedding <=> ${vector}::vector) >= ${minSimilarity}
