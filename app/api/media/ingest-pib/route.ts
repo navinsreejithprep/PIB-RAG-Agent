@@ -11,16 +11,16 @@ export const maxDuration = 60;
 // day, tested), unlike PDF ingestion's potentially-thousands-of-chunks case
 // (lib/store.ts, which deliberately uses small batches of 16 for that
 // reason). Fewer, larger OpenAI calls here materially reduces round-trip
-// time, which matters because this route also runs as a scheduled cron job
-// (vercel.json) inside Vercel Hobby's hard 10-second function timeout,
-// which applies regardless of the maxDuration above -- Hobby caps every
-// function at 10s no matter what a project configures. Measured end-to-end
-// (feed fetch + one embedding call + the bulk upsert in
-// lib/media/store.ts): ~5-6s locally, with roughly half of that shaved off
-// by batching the store's schema-check into one round trip instead of four
-// (see ensureSchema() there). If this ever does time out on Hobby, the fix
-// is either the Pro plan's longer maxDuration or trimming this further
-// (e.g. dropping the trailing count() call below).
+// time. This was originally tuned against Vercel Hobby's legacy hard
+// 10-second function cap; empirically (deploying a route that sleeps 15s
+// and confirming it returns 200), this project actually runs under Fluid
+// Compute's current default of 300s, so the real budget is far more
+// generous than the code below was written for. The optimizations (single
+// embedding call, bulk upsert in lib/media/store.ts, one schema-check round
+// trip) are kept anyway -- they're good practice regardless -- but the 10s
+// figure in older comments/README history was a real constraint that
+// turned out not to apply here; don't assume it does for a given
+// deployment without checking (Fluid Compute can be disabled per-project).
 const EMBEDDING_BATCH_SIZE = 100;
 
 async function runIngest() {
