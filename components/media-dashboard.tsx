@@ -6,9 +6,9 @@ import type { AgentState } from "@/lib/media/types";
 type ActivityEvent = { step: string; label: string; status: "running" | "done"; detail?: string };
 
 const EXAMPLE_QUERIES = [
-  "What are the major developments affecting India's renewable energy sector?",
-  "Compare how different sources reported the clean energy framework approval.",
-  "What happened with the Rajasthan solar auction and what should we watch next?",
+  "What are today's major government announcements?",
+  "Summarize the latest developments from the Ministry of Power.",
+  "What has the Prime Minister's Office announced recently?",
   "What is India's nuclear energy capacity target?",
 ];
 
@@ -21,9 +21,8 @@ async function readJson(response: Response) {
 }
 
 export default function MediaDashboard() {
-  const [seedStatus, setSeedStatus] = useState("Preparing sample dataset…");
   const [datasetStats, setDatasetStats] = useState<{ topics: string[]; sources: string[]; count: number } | null>(null);
-  const [pibStatus, setPibStatus] = useState<string | null>(null);
+  const [pibStatus, setPibStatus] = useState("Pulling live PIB press releases…");
   const [pibBusy, setPibBusy] = useState(false);
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
@@ -38,21 +37,6 @@ export default function MediaDashboard() {
     const data = await readJson(response);
     if (response.ok) setDatasetStats(data as { topics: string[]; sources: string[]; count: number });
   }
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const response = await fetch("/api/media/seed", { method: "POST" });
-        const data = await readJson(response);
-        if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : "Could not seed sample dataset.");
-        setSeedStatus(typeof data.message === "string" ? data.message : "Sample dataset ready.");
-        await refreshStats();
-      } catch (err) {
-        setSeedStatus(err instanceof Error ? err.message : "Could not prepare the sample dataset.");
-      }
-    })();
-    return () => abortRef.current?.abort();
-  }, []);
 
   async function pullPibFeed() {
     if (pibBusy) return;
@@ -70,6 +54,12 @@ export default function MediaDashboard() {
       setPibBusy(false);
     }
   }
+
+  useEffect(() => {
+    void pullPibFeed();
+    return () => abortRef.current?.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function ask(q: string) {
     const trimmed = q.trim();
@@ -149,41 +139,32 @@ export default function MediaDashboard() {
             <div className="eyebrow">Agentic RAG · Prototype</div>
             <h1>Executive Media Intelligence</h1>
             <p className="subtitle">
-              Ask about developments in a sector. The agent searches, clusters coverage into events, compares sources,
-              analyzes implications, and verifies every citation before showing you a brief.
+              Ask about developments in India&rsquo;s central government. The agent searches real Press Information Bureau (PIB) releases,
+              clusters coverage into events, analyzes implications, and verifies every citation before showing you a brief.
             </p>
           </div>
           <div className="media-dataset-badge" title={datasetStats ? `Topics: ${datasetStats.topics.join(", ")}` : undefined}>
-            <div>{seedStatus}</div>
-            {datasetStats && <div className="muted">{datasetStats.count} indexed items · {datasetStats.topics.length} topics · {datasetStats.sources.length} sources</div>}
-            <div className="muted sample-warning">Synthetic sample data — see data/sample-articles.json</div>
+            <div>{pibStatus}</div>
+            {datasetStats && <div className="muted">{datasetStats.count} indexed release{datasetStats.count === 1 ? "" : "s"} · {datasetStats.sources.length} ministries/offices</div>}
+            <div className="muted live-data-label">Live data — Press Information Bureau, Government of India</div>
+            <button className="btn ghost" type="button" disabled={pibBusy} onClick={() => void pullPibFeed()}>
+              {pibBusy ? "Pulling…" : "Pull latest releases"}
+            </button>
           </div>
         </header>
 
-        <section className="media-panel pib-panel">
-          <div className="panel-head"><h2>Live data: Press Information Bureau (Government of India)</h2></div>
-          <div className="panel-body pib-panel-body">
-            <p className="muted">
-              Optional. Pulls yesterday&rsquo;s English PIB press releases (real government announcements, full text, free) into the same
-              searchable index as the sample data below. Coverage is whatever the government actually published — it will not always include
-              renewable-energy items, and since every release ultimately comes from one source (the Indian government), cross-outlet
-              comparison only applies to the sample dataset, not PIB releases. Re-pulling on different days builds a real historical archive.
-            </p>
-            <div className="pib-panel-row">
-              <button className="btn" type="button" disabled={pibBusy} onClick={() => void pullPibFeed()}>
-                {pibBusy ? "Pulling…" : "Pull latest PIB releases"}
-              </button>
-              {pibStatus && <span className="muted small">{pibStatus}</span>}
-            </div>
-          </div>
-        </section>
+        <p className="pib-caption muted small">
+          Source: Press Information Bureau (Government of India), previous day&rsquo;s English releases, full text, free and keyless.
+          Coverage is whatever the government actually published — it will not always include a given topic, and since every release
+          ultimately comes from one source, cross-outlet comparison has nothing to compare against yet.
+        </p>
 
         <section className="media-query-bar">
           <form onSubmit={(e) => { e.preventDefault(); void ask(query); }}>
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="e.g. What are the major developments affecting India's renewable energy sector?"
+              placeholder="e.g. What are today's major government announcements?"
               disabled={busy}
               aria-label="Research question"
             />

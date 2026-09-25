@@ -87,26 +87,26 @@ Each tool is documented in its source file with a `USER PROBLEM → AI CAPABILIT
 
 ## 10. Data sources
 
-Two sources feed the same searchable index, clearly distinguishable by their `source` field in the UI:
+**Live data only: Press Information Bureau (Government of India).** The `/media` dashboard pulls this automatically on load (also available as a manual "Pull latest releases" button, or `curl -X POST localhost:3000/api/media/ingest-pib`). `lib/media/sources/pib.ts` fetches the previous day's English PIB press releases via a community-maintained mirror ([github.com/gkgangavarapu/pibindia-rss](https://github.com/gkgangavarapu/pibindia-rss)), free and keyless, with **full article text**, not just a headline/snippet.
 
-**Synthetic sample data** (default, always loaded) — see `data/sample-articles.json` (24 articles, fictional outlets and companies, `example.com` URLs) and `data/sample-background.json` (5 reference explainers). Built around a coherent domain (India's renewable energy sector) and deliberately constructed with:
+Why PIB, and why not the more commonly recommended free news APIs: NewsAPI.org, GNews, and NewsData.io either restrict their free tier to non-production use, or only return a short snippet rather than full article body text — which would weaken the comparison and citation-verification tools, since there'd be little actual text to compare or verify against. PIB releases are primary-source government announcements, not licensed news content, so they carry no such restriction, and the community mirror above provides them as full, clean English text.
 
-- The **same event reported by multiple outlets** with slightly different framing (A01/A02/A03/A04).
-- **Genuinely conflicting figures** for the same fact (₹1.2 lakh crore vs. ₹1.5 lakh crore central support).
-- A **denial pattern** (a delay report vs. the company's on-schedule statement).
-- An **embedded prompt-injection attempt** inside one article's text (A20), to test that retrieved content is treated as data, not instructions.
-- At least one topic with **no coverage in the dataset** (nuclear energy), to test honest "insufficient evidence" behavior.
+**Honest limitations** (see `lib/media/sources/pib.ts` for the full reasoning):
+- It is **not filterable by topic server-side** — it's whatever the Government of India published in the last 24 hours, across every ministry. On any given day it may contain zero items on a given topic (tested: a live pull on 2026-09-25 returned 59 releases, of which exactly 1 was renewable-energy-related).
+- **No cross-outlet comparison currently applies** — every item ultimately comes from one source (the Indian government), so the Source Comparison Tool has nothing to compare it against yet. A second, multi-outlet real source is the natural next step (see [Future roadmap](#17-future-roadmap)).
+- Re-pulling on different days **accumulates a real historical archive** (existing items are skipped, not duplicated) rather than replacing what's there — but that requires persistent storage; see below.
+- **A single "pull" only ever gets the previous calendar day's releases** — the feed itself carries no deeper history, so there is no way to backfill further than one day per pull. Building multi-day history means pulling on multiple different days (manually, or via a scheduled job — see [Accumulating history](#accumulating-history-storage-requirements) below).
 
-**Live data: Press Information Bureau (Government of India)** (optional, pulled on demand) — `lib/media/sources/pib.ts` fetches the previous day's English PIB press releases via a community-maintained mirror ([github.com/gkgangavarapu/pibindia-rss](https://github.com/gkgangavarapu/pibindia-rss)), free and keyless, with **full article text**, not just a headline/snippet (unlike most free news APIs — see the comparison this was chosen from in the section below). Click "Pull latest PIB releases" on the `/media` dashboard, or `curl -X POST localhost:3000/api/media/ingest-pib`.
-
-Why PIB, and why not the more commonly recommended options: most free news APIs (NewsAPI.org, GNews, NewsData.io) either restrict the free tier to non-production use, or only return a short snippet rather than full article body text — which would weaken the comparison and citation-verification tools, since there'd be little actual text to compare or verify against. PIB releases are primary-source government announcements, not licensed news content, so they carry no such restriction, and the community mirror above provides them as full, clean English text.
-
-**Honest limitations of the PIB integration** (see `lib/media/sources/pib.ts` for the full reasoning):
-- It is **not filterable by topic server-side** — it's whatever the Government of India published in the last 24 hours, across every ministry. On any given day it may contain zero renewable-energy items (tested: a live pull on 2026-09-25 returned 59 releases, of which exactly 1 was energy-related).
-- **No cross-outlet comparison applies to PIB releases** — every item ultimately comes from one source (the Indian government), so the Source Comparison Tool has nothing to compare it against unless the same story also appears in the synthetic dataset.
-- Re-pulling on different days **accumulates a real historical archive** (existing items are skipped, not duplicated) rather than replacing what's there.
+**A synthetic sample dataset** (`data/sample-articles.json`, `data/sample-background.json`) still exists in the repo, used only by the evaluation suite (`npm run eval:media`) for reproducible, known-answer testing — it is not loaded by the live app and is not shown in the UI. See [Evaluation methodology](#11-evaluation-methodology).
 
 The architecture supports adding a further, broader news API later: `lib/media/tools/search.ts`'s functions are the seam — add another source alongside `lib/media/sources/pib.ts` and nothing above that layer needs to change.
+
+### Accumulating history: storage requirements
+
+Building up more than one day of PIB coverage needs two things, both already built into this repo but not both wired together yet:
+
+1. **Persistent storage.** `lib/media/store.ts` already supports Postgres + pgvector via `DATABASE_URL` (the same pattern as DocQuery's store, and the same Neon database already connected to this project on Vercel would work — `media_items` is a separate table, created automatically on first use). Locally, with no `DATABASE_URL` set, data lives in memory and is lost on every restart, so "accumulated history" only really means anything once this is deployed (or `DATABASE_URL` is set locally too).
+2. **A scheduled trigger.** Nothing currently calls `/api/media/ingest-pib` on its own — a human has to click the button (or hit the endpoint) once per day. For real, unattended accumulation, the missing piece is a daily cron: e.g. a [Vercel Cron Job](https://vercel.com/docs/cron-jobs) hitting `POST /api/media/ingest-pib` once a morning, or an external scheduler (GitHub Actions on a schedule, cron-job.org, etc.) if not deployed on Vercel. Not implemented in this prototype — noted here rather than left unexplained.
 
 ## 11. Evaluation methodology
 
@@ -181,23 +181,26 @@ cp .env.example .env.local   # then add OPENAI_API_KEY
 npm run dev
 ```
 
-Open http://localhost:3000 for DocQuery (PDF chatbot), or http://localhost:3000/media for the Executive Media Intelligence Agent. The media dashboard seeds the sample dataset automatically on first load.
+Open http://localhost:3000 for DocQuery (PDF chatbot), or http://localhost:3000/media for the Executive Media Intelligence Agent. The media dashboard pulls the previous day's live PIB press releases automatically on first load.
 
 For persistent storage (required on Vercel), set `DATABASE_URL` to a Postgres connection string with the `vector` extension available (e.g. a Neon database) — see [Deploying to Vercel](#deploying-to-vercel-persistent-storage) below. Both DocQuery and the media agent use the same `DATABASE_URL`, in separate tables.
 
 ## 16. Demo instructions
 
-1. Open `/media`. Wait for "Sample dataset ready" (a few seconds).
-2. Click the first example query chip (India renewable energy developments), or type your own.
-3. Watch the activity log: Understanding → Searching → Clustering → Context → Comparing → Impact → Brief → Verifying.
-4. Read the executive brief. Expand **Key developments** to see the underlying event clusters and their sources. Expand **Source comparison** to see where outlets agreed or conflicted (try the clean-energy-framework funding figure: ₹1.2 lakh crore vs. ₹1.5 lakh crore). Check the confidence score and notes at the top.
-5. Try `"What is India's nuclear energy capacity target?"` to see the honest "evidence insufficient" behavior.
-6. Try `"Summarize the opinion piece about rooftop solar and distribution companies"` to see prompt-injection resistance — article A20 contains a hidden instruction that the agent should not follow.
-7. Click **"Pull latest PIB releases"** to index real, live Government of India press releases, then ask a question about whatever's actually in that day's releases (check the retrieved-sources list for anything with `(via PIB)` as its source) — the brief will cite and summarize a real government announcement, not the synthetic dataset.
+1. Open `/media`. Wait for the dataset badge to show a release count (a few seconds — it's pulling live PIB data).
+2. Check what's actually in today's pull: open **Evidence & sources** after your first query, or note the ministries/offices listed in the badge's tooltip.
+3. Ask something about a ministry or topic you saw in that list (e.g. "What did the Ministry of Power announce recently?"), or use an example chip.
+4. Watch the activity log: Understanding → Searching → Clustering → Context → Comparing → Impact → Brief → Verifying.
+5. Read the executive brief. Expand **Key developments** to see the underlying event clusters and their sources. Check the confidence score and notes at the top.
+6. Try a question about something you're confident isn't in today's releases (e.g. `"What is India's nuclear energy capacity target?"` if no nuclear item came through) to see the honest "evidence insufficient" behavior.
+7. Click **"Pull latest releases"** again the next day to add that day's releases on top — with persistent storage (`DATABASE_URL` set), this builds real multi-day history rather than resetting each time.
+
+Since PIB content changes daily, there's no fixed script that always shows every feature (comparison/conflict detection specifically needs two sources on the same story, which PIB alone won't reliably produce — see [Data sources](#10-data-sources)). `npm run eval:media` runs the full, repeatable 24-case evaluation suite against the synthetic dataset instead, which is built to exercise every feature deterministically.
 
 ## 17. Future roadmap
 
-- Add a second, multi-outlet real news source (e.g. NewsData.io filtered to `country=in`) alongside PIB, so real cross-source comparison becomes possible on live data, not just the synthetic dataset. PIB (`lib/media/sources/pib.ts`) is the first real source, added as an explicit opt-in pull rather than the default, so the tested/evaluated demo flow stays deterministic.
+- Add a second, multi-outlet real news source (e.g. NewsData.io filtered to `country=in`) alongside PIB, so real cross-source comparison becomes possible on live data, not just the synthetic evaluation dataset.
+- A scheduled daily pull (Vercel Cron or similar) against `/api/media/ingest-pib`, so multi-day history accumulates without a human clicking a button — see [Accumulating history](#accumulating-history-storage-requirements).
 - Cache/persist agent runs so repeat questions don't re-run the full pipeline.
 - A real manual-baseline timing study (see [Baseline methodology](#13-baseline-methodology)).
 - Reranking and hybrid (keyword + semantic) retrieval for better precision than cosine similarity alone.
